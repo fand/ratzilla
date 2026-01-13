@@ -17,7 +17,11 @@ use ratatui::{
     style::{Color, Modifier},
 };
 use std::{cell::RefCell, io::Result as IoResult, mem::swap, rc::Rc};
-use web_sys::{wasm_bindgen::JsCast, window, Element};
+use web_sys::{
+    console,
+    wasm_bindgen::{JsCast, JsValue},
+    window, Element, HtmlElement,
+};
 
 /// Re-export beamterm's atlas data type. Used by [`WebGl2BackendOptions::font_atlas`].
 pub use beamterm_renderer::FontAtlasData;
@@ -574,6 +578,10 @@ impl WebGl2Backend {
             .unwrap_or_else(|| (parent.client_width() as u32, parent.client_height() as u32));
 
         let canvas = create_canvas_in_element(parent, width, height)?;
+        if options.size.is_none() {
+            canvas.style().set_property("width", "100%")?;
+            canvas.style().set_property("height", "100%")?;
+        }
 
         let beamterm = Beamterm::builder(canvas)
             .canvas_padding_color(options.get_canvas_padding_color())
