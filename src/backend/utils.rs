@@ -172,8 +172,8 @@ pub(crate) fn performance() -> Result<web_sys::Performance, Error> {
         .ok_or(Error::UnableToRetrieveComponent("Performance"))?)
 }
 
-/// Creates a new canvas element in the specified parent element with the
-/// given width and height.
+/// Creates a new canvas element in the specified parent element.
+/// The canvas follows the parent size unless the size is specified.
 pub(crate) fn create_canvas_in_element(
     parent: &Element,
     size: Option<(u32, u32)>,
