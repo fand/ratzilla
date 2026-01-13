@@ -573,15 +573,7 @@ impl WebGl2Backend {
         options: &mut WebGl2BackendOptions,
         parent: &Element,
     ) -> Result<Terminal, Error> {
-        let (width, height) = options
-            .size
-            .unwrap_or_else(|| (parent.client_width() as u32, parent.client_height() as u32));
-
-        let canvas = create_canvas_in_element(parent, width, height)?;
-        if options.size.is_none() {
-            canvas.style().set_property("width", "100%")?;
-            canvas.style().set_property("height", "100%")?;
-        }
+        let canvas = create_canvas_in_element(parent, options.size)?;
 
         let beamterm = Beamterm::builder(canvas)
             .canvas_padding_color(options.get_canvas_padding_color())

@@ -82,11 +82,10 @@ impl Canvas {
     /// Constructs a new [`Canvas`].
     fn new(
         parent_element: web_sys::Element,
-        width: u32,
-        height: u32,
+        size: Option<(u32, u32)>,
         background_color: Color,
     ) -> Result<Self, Error> {
-        let canvas = create_canvas_in_element(&parent_element, width, height)?;
+        let canvas = create_canvas_in_element(&parent_element, size)?;
 
         let context_options = Map::new();
         context_options.set(&JsValue::from_str("alpha"), &Boolean::from(JsValue::TRUE));
@@ -158,11 +157,7 @@ impl CanvasBackend {
         // Parent element of canvas (uses <body> unless specified)
         let parent = get_element_by_id_or_body(options.grid_id.as_ref())?;
 
-        let (width, height) = options
-            .size
-            .unwrap_or_else(|| (parent.client_width() as u32, parent.client_height() as u32));
-
-        let canvas = Canvas::new(parent, width, height, Color::Black)?;
+        let canvas = Canvas::new(parent, options.size, Color::Black)?;
         let buffer = get_sized_buffer_from_canvas(&canvas.inner);
         let changed_cells = bitvec![0; buffer.len() * buffer[0].len()];
         Ok(Self {

@@ -176,18 +176,24 @@ pub(crate) fn performance() -> Result<web_sys::Performance, Error> {
 /// given width and height.
 pub(crate) fn create_canvas_in_element(
     parent: &Element,
-    width: u32,
-    height: u32,
+    size: Option<(u32, u32)>,
 ) -> Result<HtmlCanvasElement, Error> {
     let element = get_document()?.create_element("canvas")?;
-
     let canvas = element
         .clone()
         .dyn_into::<HtmlCanvasElement>()
         .map_err(|_| ())
         .expect("Unable to cast canvas element");
-    canvas.set_width(width);
-    canvas.set_height(height);
+
+    if let Some((width, height)) = size {
+        canvas.set_width(width);
+        canvas.set_height(height);
+    } else {
+        canvas.set_width(parent.client_width() as u32);
+        canvas.set_height(parent.client_height() as u32);
+        canvas.style().set_property("width", "100%")?;
+        canvas.style().set_property("height", "100%")?;
+    }
 
     parent.append_child(&element)?;
 
