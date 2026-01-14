@@ -297,26 +297,27 @@ impl CanvasBackend {
     /// This function updates the `changed_cells` vector to indicate which cells
     /// have changed.
     fn resolve_changed_cells(&mut self, force_redraw: bool) {
+        let buf_h = self.buffer.len();
+        let buf_w = self.buffer.first().map(|r| r.len()).unwrap_or(0);
+        let prev_h = self.prev_buffer.len();
+        let prev_w = self.prev_buffer.first().map(|r| r.len()).unwrap_or(0);
+
         // Ensure changed_cells matches buffer size
-        let expected_len = self.buffer.len() * self.buffer.first().map(|r| r.len()).unwrap_or(0);
+        let expected_len = buf_h * buf_w;
         if self.changed_cells.len() != expected_len {
             self.changed_cells = bitvec![0; expected_len];
+        }
+
+        // Size mismatch or force_redraw → mark all changed, skip per-cell comparison
+        if force_redraw || buf_h != prev_h || buf_w != prev_w {
+            self.changed_cells.fill(true);
+            return;
         }
 
         let mut index = 0;
         for (y, line) in self.buffer.iter().enumerate() {
             for (x, cell) in line.iter().enumerate() {
-                let changed = if force_redraw {
-                    true
-                } else {
-                    // Check bounds for prev_buffer (sizes may differ during resize)
-                    self.prev_buffer
-                        .get(y)
-                        .and_then(|row| row.get(x))
-                        .map(|prev_cell| cell != prev_cell)
-                        .unwrap_or(true)
-                };
-                self.changed_cells.set(index, changed);
+                self.changed_cells.set(index, cell != &self.prev_buffer[y][x]);
                 index += 1;
             }
         }
@@ -344,9 +345,8 @@ impl CanvasBackend {
         let mut last_color = None;
         for (y, line) in self.buffer.iter().enumerate() {
             for (x, cell) in line.iter().enumerate() {
-                // Skip empty cells or out-of-bounds index
-                let is_changed = changed_cells.get(index).map(|b| *b).unwrap_or(false);
-                if !is_changed || cell.symbol() == " " {
+                // Skip unchanged or empty cells
+                if !changed_cells[index] || cell.symbol() == " " {
                     index += 1;
                     continue;
                 }
@@ -422,8 +422,7 @@ impl CanvasBackend {
         for (y, line) in self.buffer.iter().enumerate() {
             let mut row_renderer = RowColorOptimizer::new();
             for (x, cell) in line.iter().enumerate() {
-                let is_changed = changed_cells.get(index).map(|b| *b).unwrap_or(false);
-                if is_changed {
+                if changed_cells[index] {
                     // Only calls `draw_region` if the color is different from the previous one
                     row_renderer
                         .process_color((x, y), actual_bg_color(cell))
