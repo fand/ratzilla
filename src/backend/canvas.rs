@@ -98,14 +98,20 @@ impl Canvas {
             .ok_or_else(|| Error::UnableToRetrieveCanvasContext)?
             .dyn_into::<web_sys::CanvasRenderingContext2d>()
             .expect("Unable to cast canvas context");
-        context.set_font("16px monospace");
-        context.set_text_baseline("top");
 
-        Ok(Self {
+        let mut canvas = Self {
             inner: canvas,
             context,
             background_color,
-        })
+        };
+        canvas.reset_context();
+        Ok(canvas)
+    }
+
+    /// Resets context state (font, baseline, etc). Called after canvas resize.
+    fn reset_context(&mut self) {
+        self.context.set_font("16px monospace");
+        self.context.set_text_baseline("top");
     }
 }
 
@@ -185,6 +191,9 @@ impl CanvasBackend {
         if display_width != buffer_width || display_height != buffer_height {
             self.canvas.inner.set_width(display_width);
             self.canvas.inner.set_height(display_height);
+
+            // Canvas resize resets context state, so restore font settings
+            self.canvas.reset_context();
 
             // Don't reinitialize buffer here - preserve content from draw()
             // Buffer size sync happens in resolve_changed_cells()
