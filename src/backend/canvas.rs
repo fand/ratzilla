@@ -186,10 +186,8 @@ impl CanvasBackend {
             self.canvas.inner.set_width(display_width);
             self.canvas.inner.set_height(display_height);
 
-            // Reinitialize buffer with new size
-            self.buffer = get_sized_buffer_from_canvas(&self.canvas.inner);
-            self.prev_buffer = self.buffer.clone();
-            self.changed_cells = bitvec![0; self.buffer.len() * self.buffer[0].len()];
+            // Don't reinitialize buffer here - preserve content from draw()
+            // Buffer size sync happens in resolve_changed_cells()
 
             true
         } else {
@@ -565,10 +563,10 @@ impl Backend for CanvasBackend {
     }
 
     fn size(&self) -> IoResult<Size> {
-        Ok(Size::new(
-            self.buffer[0].len().saturating_sub(1) as u16,
-            self.buffer.len().saturating_sub(1) as u16,
-        ))
+        // Return size based on canvas, not buffer, so ratatui detects resize
+        let width = (self.canvas.inner.client_width() as f64 / CELL_WIDTH) as u16;
+        let height = (self.canvas.inner.client_height() as f64 / CELL_HEIGHT) as u16;
+        Ok(Size::new(width, height))
     }
 
     fn window_size(&mut self) -> IoResult<WindowSize> {
