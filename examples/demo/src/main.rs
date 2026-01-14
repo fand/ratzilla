@@ -20,6 +20,7 @@ mod effects;
 mod ui;
 
 fn main() -> Result<()> {
+    console_error_panic_hook::set_once();
     let app_state = Rc::new(RefCell::new(App::new("Demo", true)));
 
     // Create backend with explicit size like main branch (1600x900)
