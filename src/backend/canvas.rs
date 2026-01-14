@@ -240,6 +240,28 @@ impl CanvasBackend {
         self.debug_mode = color.map(Into::into);
     }
 
+    /// Syncs buffer size to match current canvas dimensions.
+    /// Called at start of draw() to ensure buffer matches what ratatui expects.
+    fn sync_buffer_to_canvas(&mut self) {
+        let new_width = (self.canvas.inner.client_width() as f64 / CELL_WIDTH) as usize;
+        let new_height = (self.canvas.inner.client_height() as f64 / CELL_HEIGHT) as usize;
+
+        let old_height = self.buffer.len();
+        let old_width = self.buffer.first().map(|r| r.len()).unwrap_or(0);
+
+        if new_width == old_width && new_height == old_height {
+            return;
+        }
+
+        // Resize rows
+        self.buffer.resize_with(new_height, || vec![Cell::default(); new_width]);
+
+        // Resize each row's width
+        for row in &mut self.buffer {
+            row.resize(new_width, Cell::default());
+        }
+    }
+
     // Compare the current buffer to the previous buffer and updates the canvas
     // accordingly.
     //
@@ -425,27 +447,21 @@ impl CanvasBackend {
     /// Draws the cursor on the canvas.
     fn draw_cursor(&mut self) -> Result<(), Error> {
         if let Some(pos) = self.cursor_position {
-            let y = pos.y as usize;
-            let x = pos.x as usize;
-            if y >= self.buffer.len() {
-                return Ok(());
-            }
-            let line = &self.buffer[y];
-            if x >= line.len() {
-                return Ok(());
-            }
-            let cell = &line[x];
+            let cell = self
+                .buffer
+                .get(pos.y as usize)
+                .and_then(|line| line.get(pos.x as usize));
 
-            if cell.modifier.contains(Modifier::UNDERLINED) {
-                self.canvas.context.save();
-
-                self.canvas.context.fill_text(
-                    "_",
-                    pos.x as f64 * CELL_WIDTH,
-                    pos.y as f64 * CELL_HEIGHT,
-                )?;
-
-                self.canvas.context.restore();
+            if let Some(cell) = cell {
+                if cell.modifier.contains(Modifier::UNDERLINED) {
+                    self.canvas.context.save();
+                    self.canvas.context.fill_text(
+                        "_",
+                        pos.x as f64 * CELL_WIDTH,
+                        pos.y as f64 * CELL_HEIGHT,
+                    )?;
+                    self.canvas.context.restore();
+                }
             }
         }
 
@@ -481,29 +497,20 @@ impl Backend for CanvasBackend {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
+        // Sync buffer to canvas size before processing cells.
+        // This ensures buffer matches what ratatui expects from size().
+        self.sync_buffer_to_canvas();
+
         for (x, y, cell) in content {
-            let y = y as usize;
-            let x = x as usize;
-            // Skip cells outside buffer bounds (can happen during resize)
-            if y >= self.buffer.len() {
-                continue;
-            }
-            let line = &mut self.buffer[y];
-            if x >= line.len() {
-                continue;
-            }
-            line[x] = cell.clone();
+            self.buffer[y as usize][x as usize] = cell.clone();
         }
 
-        // Draw the cursor if set
+        // Draw the cursor if set (bounds check needed since cursor pos is user-controlled)
         if let Some(pos) = self.cursor_position {
-            let y = pos.y as usize;
-            let x = pos.x as usize;
-            if y < self.buffer.len() {
-                let line = &mut self.buffer[y];
-                if x < line.len() {
-                    let cursor_style = self.cursor_shape.show(line[x].style());
-                    line[x].set_style(cursor_style);
+            if let Some(line) = self.buffer.get_mut(pos.y as usize) {
+                if let Some(cell) = line.get_mut(pos.x as usize) {
+                    let cursor_style = self.cursor_shape.show(cell.style());
+                    cell.set_style(cursor_style);
                 }
             }
         }
@@ -538,14 +545,13 @@ impl Backend for CanvasBackend {
 
     fn hide_cursor(&mut self) -> IoResult<()> {
         if let Some(pos) = self.cursor_position {
-            let y = pos.y as usize;
-            let x = pos.x as usize;
-            if y < self.buffer.len() {
-                let line = &mut self.buffer[y];
-                if x < line.len() {
-                    let style = self.cursor_shape.hide(line[x].style());
-                    line[x].set_style(style);
-                }
+            if let Some(cell) = self
+                .buffer
+                .get_mut(pos.y as usize)
+                .and_then(|line| line.get_mut(pos.x as usize))
+            {
+                let style = self.cursor_shape.hide(cell.style());
+                cell.set_style(style);
             }
         }
         self.cursor_position = None;
@@ -592,13 +598,14 @@ impl Backend for CanvasBackend {
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> IoResult<()> {
         let new_pos = position.into();
         if let Some(old_pos) = self.cursor_position {
-            let y = old_pos.y as usize;
-            let x = old_pos.x as usize;
-            if y < self.buffer.len() {
-                let line = &mut self.buffer[y];
-                if x < line.len() && old_pos != new_pos {
-                    let style = self.cursor_shape.hide(line[x].style());
-                    line[x].set_style(style);
+            if old_pos != new_pos {
+                if let Some(cell) = self
+                    .buffer
+                    .get_mut(old_pos.y as usize)
+                    .and_then(|line| line.get_mut(old_pos.x as usize))
+                {
+                    let style = self.cursor_shape.hide(cell.style());
+                    cell.set_style(style);
                 }
             }
         }
