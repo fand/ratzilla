@@ -18,9 +18,8 @@ use ratatui::{
 };
 use std::{cell::RefCell, io::Result as IoResult, mem::swap, rc::Rc};
 use web_sys::{
-    console,
-    wasm_bindgen::{JsCast, JsValue},
-    window, Element, HtmlElement,
+    wasm_bindgen::JsCast,
+    window, Element,
 };
 
 /// Re-export beamterm's atlas data type. Used by [`WebGl2BackendOptions::font_atlas`].

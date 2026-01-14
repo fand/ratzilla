@@ -173,6 +173,30 @@ impl CanvasBackend {
         })
     }
 
+    /// Checks if the canvas size matches the display size and resizes if necessary.
+    /// Returns true if resized.
+    fn check_canvas_resize(&mut self) -> bool {
+        let display_width = self.canvas.inner.client_width() as u32;
+        let display_height = self.canvas.inner.client_height() as u32;
+
+        let buffer_width = self.canvas.inner.width();
+        let buffer_height = self.canvas.inner.height();
+
+        if display_width != buffer_width || display_height != buffer_height {
+            self.canvas.inner.set_width(display_width);
+            self.canvas.inner.set_height(display_height);
+
+            // Reinitialize buffer with new size
+            self.buffer = get_sized_buffer_from_canvas(&self.canvas.inner);
+            self.prev_buffer = self.buffer.clone();
+            self.changed_cells = bitvec![0; self.buffer.len() * self.buffer[0].len()];
+
+            true
+        } else {
+            false
+        }
+    }
+
     /// Sets the background color of the canvas.
     pub fn set_background_color(&mut self, color: Color) {
         self.canvas.background_color = color;
@@ -244,12 +268,26 @@ impl CanvasBackend {
     /// This function updates the `changed_cells` vector to indicate which cells
     /// have changed.
     fn resolve_changed_cells(&mut self, force_redraw: bool) {
+        // Ensure changed_cells matches buffer size
+        let expected_len = self.buffer.len() * self.buffer.first().map(|r| r.len()).unwrap_or(0);
+        if self.changed_cells.len() != expected_len {
+            self.changed_cells = bitvec![0; expected_len];
+        }
+
         let mut index = 0;
         for (y, line) in self.buffer.iter().enumerate() {
             for (x, cell) in line.iter().enumerate() {
-                let prev_cell = &self.prev_buffer[y][x];
-                self.changed_cells
-                    .set(index, force_redraw || cell != prev_cell);
+                let changed = if force_redraw {
+                    true
+                } else {
+                    // Check bounds for prev_buffer (sizes may differ during resize)
+                    self.prev_buffer
+                        .get(y)
+                        .and_then(|row| row.get(x))
+                        .map(|prev_cell| cell != prev_cell)
+                        .unwrap_or(true)
+                };
+                self.changed_cells.set(index, changed);
                 index += 1;
             }
         }
@@ -277,8 +315,9 @@ impl CanvasBackend {
         let mut last_color = None;
         for (y, line) in self.buffer.iter().enumerate() {
             for (x, cell) in line.iter().enumerate() {
-                // Skip empty cells
-                if !changed_cells[index] || cell.symbol() == " " {
+                // Skip empty cells or out-of-bounds index
+                let is_changed = changed_cells.get(index).map(|b| *b).unwrap_or(false);
+                if !is_changed || cell.symbol() == " " {
                     index += 1;
                     continue;
                 }
@@ -354,7 +393,8 @@ impl CanvasBackend {
         for (y, line) in self.buffer.iter().enumerate() {
             let mut row_renderer = RowColorOptimizer::new();
             for (x, cell) in line.iter().enumerate() {
-                if changed_cells[index] {
+                let is_changed = changed_cells.get(index).map(|b| *b).unwrap_or(false);
+                if is_changed {
                     // Only calls `draw_region` if the color is different from the previous one
                     row_renderer
                         .process_color((x, y), actual_bg_color(cell))
@@ -378,7 +418,16 @@ impl CanvasBackend {
     /// Draws the cursor on the canvas.
     fn draw_cursor(&mut self) -> Result<(), Error> {
         if let Some(pos) = self.cursor_position {
-            let cell = &self.buffer[pos.y as usize][pos.x as usize];
+            let y = pos.y as usize;
+            let x = pos.x as usize;
+            if y >= self.buffer.len() {
+                return Ok(());
+            }
+            let line = &self.buffer[y];
+            if x >= line.len() {
+                return Ok(());
+            }
+            let cell = &line[x];
 
             if cell.modifier.contains(Modifier::UNDERLINED) {
                 self.canvas.context.save();
@@ -428,8 +477,14 @@ impl Backend for CanvasBackend {
         for (x, y, cell) in content {
             let y = y as usize;
             let x = x as usize;
+            // Skip cells outside buffer bounds (can happen during resize)
+            if y >= self.buffer.len() {
+                continue;
+            }
             let line = &mut self.buffer[y];
-            line.extend(std::iter::repeat_with(Cell::default).take(x.saturating_sub(line.len())));
+            if x >= line.len() {
+                continue;
+            }
             line[x] = cell.clone();
         }
 
@@ -437,10 +492,12 @@ impl Backend for CanvasBackend {
         if let Some(pos) = self.cursor_position {
             let y = pos.y as usize;
             let x = pos.x as usize;
-            let line = &mut self.buffer[y];
-            if x < line.len() {
-                let cursor_style = self.cursor_shape.show(line[x].style());
-                line[x].set_style(cursor_style);
+            if y < self.buffer.len() {
+                let line = &mut self.buffer[y];
+                if x < line.len() {
+                    let cursor_style = self.cursor_shape.show(line[x].style());
+                    line[x].set_style(cursor_style);
+                }
             }
         }
 
@@ -452,8 +509,11 @@ impl Backend for CanvasBackend {
     /// This function is called after the [`CanvasBackend::draw`] function to
     /// actually render the content to the screen.
     fn flush(&mut self) -> IoResult<()> {
+        // Check for canvas resize and force redraw if resized
+        let resized = self.check_canvas_resize();
+
         // Only runs once.
-        if !self.initialized {
+        if !self.initialized || resized {
             self.update_grid(true)?;
             self.prev_buffer = self.buffer.clone();
             self.initialized = true;
@@ -473,10 +533,12 @@ impl Backend for CanvasBackend {
         if let Some(pos) = self.cursor_position {
             let y = pos.y as usize;
             let x = pos.x as usize;
-            let line = &mut self.buffer[y];
-            if x < line.len() {
-                let style = self.cursor_shape.hide(line[x].style());
-                line[x].set_style(style);
+            if y < self.buffer.len() {
+                let line = &mut self.buffer[y];
+                if x < line.len() {
+                    let style = self.cursor_shape.hide(line[x].style());
+                    line[x].set_style(style);
+                }
             }
         }
         self.cursor_position = None;
@@ -496,7 +558,9 @@ impl Backend for CanvasBackend {
     }
 
     fn clear(&mut self) -> IoResult<()> {
-        self.buffer = get_sized_buffer();
+        self.buffer = get_sized_buffer_from_canvas(&self.canvas.inner);
+        self.prev_buffer = self.buffer.clone();
+        self.changed_cells = bitvec![0; self.buffer.len() * self.buffer[0].len()];
         Ok(())
     }
 
@@ -523,10 +587,12 @@ impl Backend for CanvasBackend {
         if let Some(old_pos) = self.cursor_position {
             let y = old_pos.y as usize;
             let x = old_pos.x as usize;
-            let line = &mut self.buffer[y];
-            if x < line.len() && old_pos != new_pos {
-                let style = self.cursor_shape.hide(line[x].style());
-                line[x].set_style(style);
+            if y < self.buffer.len() {
+                let line = &mut self.buffer[y];
+                if x < line.len() && old_pos != new_pos {
+                    let style = self.cursor_shape.hide(line[x].style());
+                    line[x].set_style(style);
+                }
             }
         }
         self.cursor_position = Some(new_pos);
